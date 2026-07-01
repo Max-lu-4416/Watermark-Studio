@@ -13,33 +13,83 @@
       <div class="brand">
         <div class="brand-mark">WS</div>
         <div>
-          <h1>Watermark Studio</h1>
+          <div class="brand-title-row">
+            <h1>Watermark Studio</h1>
+            <label class="theme-switch" for="themeToggle" title="切换浅色 / 深色模式" aria-label="切换浅色 / 深色模式">
+              <input id="themeToggle" type="checkbox">
+              <i aria-hidden="true"></i>
+            </label>
+          </div>
           <p>本地 PNG 水印工具</p>
         </div>
       </div>
 
-      <label class="switch-control theme-switch" for="themeToggle">
-        <span>浅色模式</span>
-        <input id="themeToggle" type="checkbox">
-        <i aria-hidden="true"></i>
-      </label>
-
       <section class="control-group thumbnail-section">
         <div class="section-heading">
-          <h2>图片导入</h2>
+          <h2>照片列表</h2>
           <span id="photoCount">0 张</span>
         </div>
         <input id="photoInput" type="file" accept="image/jpeg,image/png,image/webp" multiple>
+        <div class="selection-toolbar">
+          <span id="selectionStatus">已选 0 / 共 0</span>
+          <div>
+            <button id="deleteSelectedButton" class="delete-selected" type="button">删除选中</button>
+            <button id="selectAllButton" type="button">全选</button>
+            <button id="clearSelectionButton" type="button">取消</button>
+          </div>
+        </div>
         <div id="thumbnailList" class="thumbnail-list" aria-label="已导入图片缩略图"></div>
       </section>
 
       <section class="control-group">
-        <h2>水印文件</h2>
+        <div class="section-heading">
+          <h2>水印内容</h2>
+          <span>PNG / 文本</span>
+        </div>
         <label class="file-picker secondary" for="watermarkInput">
           <span>上传 PNG 水印</span>
           <small>透明背景 PNG</small>
         </label>
         <input id="watermarkInput" type="file" accept="image/png">
+        <label class="text-control" for="textWatermarkInput">
+          <span>文本水印</span>
+          <textarea id="textWatermarkInput" rows="2" placeholder="Copyright"></textarea>
+        </label>
+        <label class="color-control" for="textColorInput">
+          <span>文字颜色</span>
+          <input id="textColorInput" type="color" value="#ffffff">
+        </label>
+        <label class="select-control" for="textFontSelect">
+          <span>文字字体</span>
+          <select id="textFontSelect">
+            <option value="system">系统默认</option>
+            <option value="serif">宋体/衬线</option>
+            <option value="sans">黑体/无衬线</option>
+            <option value="mono">等宽</option>
+          </select>
+        </label>
+        <label class="select-control" for="textWeightSelect">
+          <span>文字字重</span>
+          <select id="textWeightSelect">
+            <option value="400">常规</option>
+            <option value="600">半粗</option>
+            <option value="700" selected>粗体</option>
+            <option value="800">特粗</option>
+          </select>
+        </label>
+        <label class="switch-control" for="textItalicToggle">
+          <span>文字斜体</span>
+          <input id="textItalicToggle" type="checkbox">
+          <i aria-hidden="true"></i>
+        </label>
+        <label class="select-control" for="textEffectSelect">
+          <span>文字效果</span>
+          <select id="textEffectSelect">
+            <option value="shadow">阴影</option>
+            <option value="outline">描边</option>
+            <option value="none">无</option>
+          </select>
+        </label>
         <p id="watermarkStatus" class="notice">正在加载默认水印...</p>
       </section>
     </aside>
@@ -47,7 +97,6 @@
     <main class="preview-area">
       <div class="canvas-wrap">
         <canvas id="previewCanvas" aria-label="图片水印预览"></canvas>
-        <button id="deleteSelectedButton" class="delete-selected" type="button">删除选中</button>
         <div id="emptyState" class="empty-state">请导入一张图片开始添加水印</div>
       </div>
       <div id="messageBar" class="message-bar" role="status" aria-live="polite"></div>
@@ -55,7 +104,10 @@
 
     <aside class="panel panel-right">
       <section class="control-group">
-        <h2>水印参数</h2>
+        <div class="section-heading">
+          <h2>水印样式</h2>
+          <span>大小 / 透明度</span>
+        </div>
 
         <label class="range-control" for="sizeRange">
           <span>水印大小</span>
@@ -73,32 +125,48 @@
           <span>边距</span>
           <strong id="marginValue">60</strong>
         </label>
-        <input id="marginRange" type="range" min="0" max="100" value="60">
+        <input id="marginRange" type="range" min="0" max="30" value="6">
 
         <label class="switch-control" for="invertToggle">
           <span>水印反色</span>
           <input id="invertToggle" type="checkbox">
           <i aria-hidden="true"></i>
         </label>
+
+        <label class="select-control" for="watermarkLayoutSelect">
+          <span>排列方式</span>
+          <select id="watermarkLayoutSelect">
+            <option value="horizontal">横排</option>
+            <option value="vertical">竖排</option>
+            <option value="image-only">仅 PNG</option>
+            <option value="text-only">仅文本</option>
+          </select>
+        </label>
       </section>
 
       <section class="control-group">
-        <h2>位置</h2>
+        <div class="section-heading">
+          <h2>锚点位置</h2>
+          <span>9 点定位</span>
+        </div>
         <div class="position-grid" role="radiogroup" aria-label="水印位置">
-          <label><input type="radio" name="position" value="top-left"><span>左上</span></label>
-          <label><input type="radio" name="position" value="top-center"><span>上中</span></label>
-          <label><input type="radio" name="position" value="top-right"><span>右上</span></label>
-          <label><input type="radio" name="position" value="middle-left"><span>左中</span></label>
-          <label><input type="radio" name="position" value="center"><span>居中</span></label>
-          <label><input type="radio" name="position" value="middle-right"><span>右中</span></label>
-          <label><input type="radio" name="position" value="bottom-left"><span>左下</span></label>
-          <label><input type="radio" name="position" value="bottom-center" checked><span>下中</span></label>
-          <label><input type="radio" name="position" value="bottom-right"><span>右下</span></label>
+          <label title="左上"><input type="radio" name="position" value="top-left"><span>左上</span></label>
+          <label title="上中"><input type="radio" name="position" value="top-center"><span>上中</span></label>
+          <label title="右上"><input type="radio" name="position" value="top-right"><span>右上</span></label>
+          <label title="左中"><input type="radio" name="position" value="middle-left"><span>左中</span></label>
+          <label title="居中"><input type="radio" name="position" value="center"><span>居中</span></label>
+          <label title="右中"><input type="radio" name="position" value="middle-right"><span>右中</span></label>
+          <label title="左下"><input type="radio" name="position" value="bottom-left"><span>左下</span></label>
+          <label title="下中"><input type="radio" name="position" value="bottom-center" checked><span>下中</span></label>
+          <label title="右下"><input type="radio" name="position" value="bottom-right"><span>右下</span></label>
         </div>
       </section>
 
       <section class="control-group export-settings">
-        <h2>导出设置</h2>
+        <div class="section-heading">
+          <h2>导出</h2>
+          <span>格式 / 尺寸</span>
+        </div>
 
         <label class="range-control" for="qualityRange">
           <span>JPG 质量</span>
@@ -108,12 +176,48 @@
 
         <label class="number-control" for="longEdgeInput">
           <span>长边分辨率</span>
-          <input id="longEdgeInput" type="number" min="50" max="10000" step="10" value="300">
+          <span class="resolution-stack">
+            <span>长边分辨率</span>
+            <small id="outputSizeValue">3000 x --</small>
+          </span>
+          <input id="longEdgeInput" type="number" min="50" max="10000" step="10" value="3000">
+        </label>
+
+        <label class="text-control" for="filenamePrefixInput">
+          <span>文件名前缀</span>
+          <input id="filenamePrefixInput" type="text" placeholder="optional">
+        </label>
+
+        <label class="text-control" for="filenameSuffixInput">
+          <span>文件名后缀</span>
+          <input id="filenameSuffixInput" type="text" value="_watermarked">
+        </label>
+
+        <label class="select-control" for="formatSelect">
+          <span>保存格式</span>
+          <select id="formatSelect">
+            <option value="jpeg">JPG</option>
+            <option value="png">PNG</option>
+            <option value="webp">WEBP</option>
+          </select>
+        </label>
+
+        <label class="select-control" for="colorSpaceSelect">
+          <span>色彩空间</span>
+          <select id="colorSpaceSelect">
+            <option value="srgb">sRGB</option>
+            <option value="display-p3">Display P3</option>
+          </select>
         </label>
 
         <div class="segmented-control" role="radiogroup" aria-label="导出范围">
           <label><input type="radio" name="exportScope" value="current" checked><span>当前图片</span></label>
           <label><input type="radio" name="exportScope" value="all"><span>全部图片</span></label>
+        </div>
+
+        <div class="segmented-control" role="radiogroup" aria-label="导出方式">
+          <label><input type="radio" name="exportDelivery" value="separate"><span>单张文件</span></label>
+          <label><input type="radio" name="exportDelivery" value="zip" checked><span>ZIP 包</span></label>
         </div>
       </section>
 

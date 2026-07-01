@@ -15,15 +15,30 @@
       status: "loading",
       message: "正在加载默认水印..."
     },
+    textWatermark: {
+      enabled: false,
+      text: "",
+      color: "#ffffff",
+      fontFamily: "system",
+      fontWeight: "700",
+      italic: false,
+      effect: "shadow"
+    },
     settings: {
       sizePercent: 15,
       opacity: 1,
       position: "bottom-center",
-      margin: 60,
+      margin: 6,
+      watermarkLayout: "horizontal",
       invertWatermark: false,
       exportQuality: 0.95,
       exportScope: "current",
-      outputLongEdge: 300,
+      exportDelivery: "zip",
+      outputLongEdge: 3000,
+      outputFormat: "jpeg",
+      colorSpace: "srgb",
+      filenamePrefix: "",
+      filenameSuffix: "_watermarked",
       theme: "dark"
     }
   };
@@ -33,10 +48,20 @@
       file: null,
       image: null,
       objectUrl: "",
+      previewUrl: "",
+      thumbnailUrl: "",
       name: "",
       width: 0,
       height: 0
     };
+  }
+
+  function revokePhotoUrls(photo) {
+    ["objectUrl", "previewUrl", "thumbnailUrl"].forEach((key) => {
+      if (photo[key]) {
+        URL.revokeObjectURL(photo[key]);
+      }
+    });
   }
 
   function setActivePhoto(index) {
@@ -63,9 +88,7 @@
 
   function clearPhotos() {
     state.photos.forEach((photo) => {
-      if (photo.objectUrl) {
-        URL.revokeObjectURL(photo.objectUrl);
-      }
+      revokePhotoUrls(photo);
     });
 
     state.photos = [];
@@ -96,6 +119,25 @@
     state.selectedPhotoIndices = [index];
     state.selectionAnchorIndex = index;
     setActivePhoto(index);
+  }
+
+  function previewPhoto(index) {
+    if (index < 0 || index >= state.photos.length) {
+      return;
+    }
+
+    setActivePhoto(index);
+  }
+
+  function clearPhotoSelection() {
+    state.selectedPhotoIndices = [];
+    state.selectionAnchorIndex = -1;
+  }
+
+  function selectAllPhotos() {
+    state.selectedPhotoIndices = state.photos.map((photo, index) => index);
+    state.selectionAnchorIndex = state.selectedPhotoIndex >= 0 ? state.selectedPhotoIndex : 0;
+    normalizeSelection();
   }
 
   function togglePhotoSelection(index) {
@@ -146,9 +188,7 @@
     state.photos.forEach((photo, index) => {
       if (selected.has(index)) {
         deletedCount += 1;
-        if (photo.objectUrl) {
-          URL.revokeObjectURL(photo.objectUrl);
-        }
+        revokePhotoUrls(photo);
       } else {
         nextPhotos.push(photo);
       }
@@ -203,18 +243,29 @@
     };
   }
 
+  function updateTextWatermark(nextTextWatermark) {
+    state.textWatermark = {
+      ...state.textWatermark,
+      ...nextTextWatermark
+    };
+  }
+
   window.WatermarkStudio = window.WatermarkStudio || {};
   window.WatermarkStudio.stateModule = {
     DEFAULT_WATERMARK_PATH,
     state,
     clearPhotos,
+    clearPhotoSelection,
+    selectAllPhotos,
     appendPhotos,
+    previewPhoto,
     selectSinglePhoto,
     togglePhotoSelection,
     selectPhotoRange,
     deleteSelectedPhotos,
     setWatermark,
     setWatermarkMissing,
+    updateTextWatermark,
     updateWatermarkSettings
   };
 })();
