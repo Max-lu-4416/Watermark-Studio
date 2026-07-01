@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Watermark Studio</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23181b21'/%3E%3Ctext x='32' y='39' font-size='22' text-anchor='middle' fill='%2356a8ff' font-family='Arial' font-weight='700'%3EWS%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="panel panel-left">
+      <div class="brand">
+        <div class="brand-mark">WS</div>
+        <div>
+          <h1>Watermark Studio</h1>
+          <p>本地 PNG 水印工具</p>
+        </div>
+      </div>
+
+      <label class="switch-control theme-switch" for="themeToggle">
+        <span>浅色模式</span>
+        <input id="themeToggle" type="checkbox">
+        <i aria-hidden="true"></i>
+      </label>
+
+      <section class="control-group thumbnail-section">
+        <div class="section-heading">
+          <h2>图片导入</h2>
+          <span id="photoCount">0 张</span>
+        </div>
+        <input id="photoInput" type="file" accept="image/jpeg,image/png,image/webp" multiple>
+        <div id="thumbnailList" class="thumbnail-list" aria-label="已导入图片缩略图"></div>
+      </section>
+
+      <section class="control-group">
+        <h2>水印文件</h2>
+        <label class="file-picker secondary" for="watermarkInput">
+          <span>上传 PNG 水印</span>
+          <small>透明背景 PNG</small>
+        </label>
+        <input id="watermarkInput" type="file" accept="image/png">
+        <p id="watermarkStatus" class="notice">正在加载默认水印...</p>
+      </section>
+    </aside>
+
+    <main class="preview-area">
+      <div class="canvas-wrap">
+        <canvas id="previewCanvas" aria-label="图片水印预览"></canvas>
+        <button id="deleteSelectedButton" class="delete-selected" type="button">删除选中</button>
+        <div id="emptyState" class="empty-state">请导入一张图片开始添加水印</div>
+      </div>
+      <div id="messageBar" class="message-bar" role="status" aria-live="polite"></div>
+    </main>
+
+    <aside class="panel panel-right">
+      <section class="control-group">
+        <h2>水印参数</h2>
+
+        <label class="range-control" for="sizeRange">
+          <span>水印大小</span>
+          <strong id="sizeValue">15</strong>
+        </label>
+        <input id="sizeRange" type="range" min="0" max="100" value="15">
+
+        <label class="range-control" for="opacityRange">
+          <span>透明度</span>
+          <strong id="opacityValue">100</strong>
+        </label>
+        <input id="opacityRange" type="range" min="0" max="100" value="100">
+
+        <label class="range-control" for="marginRange">
+          <span>边距</span>
+          <strong id="marginValue">60</strong>
+        </label>
+        <input id="marginRange" type="range" min="0" max="100" value="60">
+
+        <label class="switch-control" for="invertToggle">
+          <span>水印反色</span>
+          <input id="invertToggle" type="checkbox">
+          <i aria-hidden="true"></i>
+        </label>
+      </section>
+
+      <section class="control-group">
+        <h2>位置</h2>
+        <div class="position-grid" role="radiogroup" aria-label="水印位置">
+          <label><input type="radio" name="position" value="top-left"><span>左上</span></label>
+          <label><input type="radio" name="position" value="top-center"><span>上中</span></label>
+          <label><input type="radio" name="position" value="top-right"><span>右上</span></label>
+          <label><input type="radio" name="position" value="middle-left"><span>左中</span></label>
+          <label><input type="radio" name="position" value="center"><span>居中</span></label>
+          <label><input type="radio" name="position" value="middle-right"><span>右中</span></label>
+          <label><input type="radio" name="position" value="bottom-left"><span>左下</span></label>
+          <label><input type="radio" name="position" value="bottom-center" checked><span>下中</span></label>
+          <label><input type="radio" name="position" value="bottom-right"><span>右下</span></label>
+        </div>
+      </section>
+
+      <section class="control-group export-settings">
+        <h2>导出设置</h2>
+
+        <label class="range-control" for="qualityRange">
+          <span>JPG 质量</span>
+          <strong id="qualityValue">95</strong>
+        </label>
+        <input id="qualityRange" type="range" min="1" max="100" value="95">
+
+        <label class="number-control" for="longEdgeInput">
+          <span>长边分辨率</span>
+          <input id="longEdgeInput" type="number" min="50" max="10000" step="10" value="300">
+        </label>
+
+        <div class="segmented-control" role="radiogroup" aria-label="导出范围">
+          <label><input type="radio" name="exportScope" value="current" checked><span>当前图片</span></label>
+          <label><input type="radio" name="exportScope" value="all"><span>全部图片</span></label>
+        </div>
+      </section>
+
+      <button id="exportButton" class="export-button" type="button">导出 JPG</button>
+    </aside>
+  </div>
+
+  <script src="js/state.js"></script>
+  <script src="js/canvas-renderer.js"></script>
+  <script src="js/watermark-image.js"></script>
+  <script src="js/export.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
