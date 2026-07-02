@@ -4,14 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Watermark Studio</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23181b21'/%3E%3Ctext x='32' y='39' font-size='22' text-anchor='middle' fill='%2356a8ff' font-family='Arial' font-weight='700'%3EWS%3C/text%3E%3C/svg%3E">
+  <link id="faviconLink" rel="icon" href="assets/icons/theme-dark.png">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div class="app-shell">
     <aside class="panel panel-left">
       <div class="brand">
-        <div class="brand-mark">WS</div>
+        <div class="brand-mark" aria-hidden="true">
+          <img class="brand-icon brand-icon-dark" src="assets/icons/theme-dark.png" alt="">
+          <img class="brand-icon brand-icon-light" src="assets/icons/theme-light.png" alt="">
+        </div>
         <div>
           <div class="brand-title-row">
             <h1>Watermark Studio</h1>
@@ -58,37 +61,6 @@
         <label class="color-control" for="textColorInput">
           <span>文字颜色</span>
           <input id="textColorInput" type="color" value="#ffffff">
-        </label>
-        <label class="select-control" for="textFontSelect">
-          <span>文字字体</span>
-          <select id="textFontSelect">
-            <option value="system">系统默认</option>
-            <option value="serif">宋体/衬线</option>
-            <option value="sans">黑体/无衬线</option>
-            <option value="mono">等宽</option>
-          </select>
-        </label>
-        <label class="select-control" for="textWeightSelect">
-          <span>文字字重</span>
-          <select id="textWeightSelect">
-            <option value="400">常规</option>
-            <option value="600">半粗</option>
-            <option value="700" selected>粗体</option>
-            <option value="800">特粗</option>
-          </select>
-        </label>
-        <label class="switch-control" for="textItalicToggle">
-          <span>文字斜体</span>
-          <input id="textItalicToggle" type="checkbox">
-          <i aria-hidden="true"></i>
-        </label>
-        <label class="select-control" for="textEffectSelect">
-          <span>文字效果</span>
-          <select id="textEffectSelect">
-            <option value="shadow">阴影</option>
-            <option value="outline">描边</option>
-            <option value="none">无</option>
-          </select>
         </label>
         <p id="watermarkStatus" class="notice">正在加载默认水印...</p>
       </section>
@@ -163,56 +135,130 @@
       </section>
 
       <section class="control-group export-settings">
-        <div class="section-heading">
-          <h2>导出</h2>
-          <span>格式 / 尺寸</span>
+        <div class="export-column">
+          <div class="export-block">
+            <div class="section-heading">
+              <h2>文件命名</h2>
+              <span id="filenamePreviewValue">--</span>
+            </div>
+            <label class="text-control" for="filenamePrefixInput">
+              <span>文件名前缀</span>
+              <input id="filenamePrefixInput" type="text" placeholder="optional">
+            </label>
+            <label class="text-control" for="filenameSuffixInput">
+              <span>文件名后缀</span>
+              <input id="filenameSuffixInput" type="text" value="_watermarked">
+            </label>
+          </div>
+
+          <div class="export-block">
+            <div class="section-heading">
+              <h2>调整图片大小</h2>
+              <span id="outputSizeValue">3000 x 3000</span>
+            </div>
+            <div class="size-grid">
+              <label class="number-control" for="resizeWidthInput">
+                <span>W</span>
+                <input id="resizeWidthInput" type="number" min="1" max="50000" step="1" value="3000">
+              </label>
+              <label class="number-control" for="resizeHeightInput">
+                <span>H</span>
+                <input id="resizeHeightInput" type="number" min="1" max="50000" step="1" value="3000">
+              </label>
+              <label class="number-control" for="resizePercentInput">
+                <span>百分比</span>
+                <input id="resizePercentInput" type="number" min="1" max="1000" step="1" value="100">
+              </label>
+            </div>
+            <label class="switch-control" for="resizeAspectToggle">
+              <span>锁定宽高比例</span>
+              <input id="resizeAspectToggle" type="checkbox" checked>
+              <i aria-hidden="true"></i>
+            </label>
+          </div>
+
+          <div class="export-block">
+            <div class="section-heading">
+              <h2>输出锐化</h2>
+            </div>
+            <label class="select-control" for="outputSharpeningSelect">
+              <span>锐化</span>
+              <select id="outputSharpeningSelect">
+                <option value="none">关闭</option>
+                <option value="low">低</option>
+                <option value="standard">标准</option>
+                <option value="high">高</option>
+              </select>
+            </label>
+          </div>
         </div>
 
-        <label class="range-control" for="qualityRange">
-          <span>JPG 质量</span>
-          <strong id="qualityValue">95</strong>
-        </label>
-        <input id="qualityRange" type="range" min="1" max="100" value="95">
+        <div class="export-column">
+          <div class="export-block">
+            <div class="section-heading">
+              <h2>文件设置</h2>
+              <span id="qualityHint">JPG / WEBP</span>
+            </div>
+            <label class="select-control" for="formatSelect">
+              <span>图片格式</span>
+              <select id="formatSelect">
+                <option value="jpeg">JPG</option>
+                <option value="png">PNG</option>
+                <option value="webp">WEBP</option>
+              </select>
+            </label>
+            <label class="range-control" for="qualityRange">
+              <span>品质</span>
+              <strong id="qualityValue">95</strong>
+            </label>
+            <input id="qualityRange" type="range" min="1" max="100" value="95">
+            <label class="select-control" for="colorSpaceSelect">
+              <span>色彩空间</span>
+              <select id="colorSpaceSelect">
+                <option value="srgb">sRGB</option>
+                <option value="display-p3">Display P3</option>
+              </select>
+            </label>
+            <label class="switch-control" for="targetFileSizeToggle">
+              <span>限制文件大小</span>
+              <input id="targetFileSizeToggle" type="checkbox">
+              <i aria-hidden="true"></i>
+            </label>
+            <label class="number-control" for="targetFileSizeInput">
+              <span>目标大小 KB</span>
+              <input id="targetFileSizeInput" type="number" min="20" max="512000" step="10" value="1024">
+            </label>
+          </div>
 
-        <label class="number-control" for="longEdgeInput">
-          <span>长边分辨率</span>
-          <span class="resolution-stack">
-            <span>长边分辨率</span>
-            <small id="outputSizeValue">3000 x --</small>
-          </span>
-          <input id="longEdgeInput" type="number" min="50" max="10000" step="10" value="3000">
-        </label>
-
-        <label class="text-control" for="filenamePrefixInput">
-          <span>文件名前缀</span>
-          <input id="filenamePrefixInput" type="text" placeholder="optional">
-        </label>
-
-        <label class="text-control" for="filenameSuffixInput">
-          <span>文件名后缀</span>
-          <input id="filenameSuffixInput" type="text" value="_watermarked">
-        </label>
-
-        <label class="select-control" for="formatSelect">
-          <span>保存格式</span>
-          <select id="formatSelect">
-            <option value="jpeg">JPG</option>
-            <option value="png">PNG</option>
-            <option value="webp">WEBP</option>
-          </select>
-        </label>
-
-        <label class="select-control" for="colorSpaceSelect">
-          <span>色彩空间</span>
-          <select id="colorSpaceSelect">
-            <option value="srgb">sRGB</option>
-            <option value="display-p3">Display P3</option>
-          </select>
-        </label>
-
-        <div class="segmented-control" role="radiogroup" aria-label="导出范围">
-          <label><input type="radio" name="exportScope" value="current" checked><span>当前图片</span></label>
-          <label><input type="radio" name="exportScope" value="all"><span>全部图片</span></label>
+          <div class="export-block">
+            <div class="section-heading">
+              <h2>元数据</h2>
+            </div>
+            <label class="select-control" for="metadataSelect">
+              <span>元数据</span>
+              <select id="metadataSelect">
+                <option value="none">无</option>
+                <option value="copyright">版权</option>
+                <option value="copyright-contact" selected>版权和联系信息</option>
+                <option value="all-except-camera">除相机信息外的全部</option>
+                <option value="all">全部</option>
+              </select>
+            </label>
+            <div id="metadataFields" class="metadata-fields">
+              <label class="text-control" for="metadataAuthorInput">
+                <span>作者</span>
+                <input id="metadataAuthorInput" type="text">
+              </label>
+              <label class="text-control" for="metadataCopyrightInput">
+                <span>版权</span>
+                <input id="metadataCopyrightInput" type="text">
+              </label>
+              <label class="text-control" for="metadataContactInput">
+                <span>联系方式</span>
+                <input id="metadataContactInput" type="text">
+              </label>
+            </div>
+          </div>
         </div>
 
         <div class="segmented-control" role="radiogroup" aria-label="导出方式">
@@ -221,7 +267,7 @@
         </div>
       </section>
 
-      <button id="exportButton" class="export-button" type="button">导出 JPG</button>
+      <button id="exportButton" class="export-button" type="button">导出</button>
     </aside>
   </div>
 

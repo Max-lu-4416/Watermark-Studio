@@ -2,6 +2,8 @@
   const { state } = window.WatermarkStudio.stateModule;
   const previewPadding = 28;
   const maxPreviewCanvasLongEdge = 4096;
+  const defaultTextFontFamily = '"Times New Roman", SimHei, "Microsoft YaHei", sans-serif';
+  const defaultTextFontWeight = "700";
 
   function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
@@ -43,17 +45,6 @@
     };
   }
 
-  function getTextFontFamily(fontFamily) {
-    const fonts = {
-      system: 'Inter, "Segoe UI", "Microsoft YaHei", Arial, sans-serif',
-      serif: '"Times New Roman", "Songti SC", SimSun, serif',
-      sans: '"Microsoft YaHei", "Segoe UI", Arial, sans-serif',
-      mono: '"Cascadia Mono", Consolas, "Courier New", monospace'
-    };
-
-    return fonts[fontFamily] || fonts.system;
-  }
-
   function getActiveTextWatermark(textWatermark) {
     if (!textWatermark || !textWatermark.enabled) {
       return null;
@@ -71,15 +62,13 @@
     return {
       lines,
       color: textWatermark.color || "#ffffff",
-      fontFamily: getTextFontFamily(textWatermark.fontFamily),
-      fontWeight: textWatermark.fontWeight || "700",
-      italic: Boolean(textWatermark.italic),
-      effect: textWatermark.effect || "shadow"
+      fontFamily: defaultTextFontFamily,
+      fontWeight: defaultTextFontWeight
     };
   }
 
   function getTextFont(text) {
-    return `${text.italic ? "italic " : ""}${text.fontWeight} ${text.fontSize}px ${text.fontFamily}`;
+    return `${text.fontWeight} ${text.fontSize}px ${text.fontFamily}`;
   }
 
   function getBoxLayout(canvasWidth, canvasHeight, boxWidth, boxHeight, settings) {
@@ -176,8 +165,6 @@
       fontFamily: activeText.fontFamily,
       fontSize: fontSize * scale,
       fontWeight: activeText.fontWeight,
-      italic: activeText.italic,
-      effect: activeText.effect,
       lineHeight: lineHeight * scale,
       x: isVertical || !hasImage
         ? origin.x + width / 2
@@ -221,32 +208,15 @@
     if (layout.text) {
       ctx.filter = "none";
       ctx.fillStyle = layout.text.color;
-      ctx.font = `${layout.text.italic ? "italic " : ""}${layout.text.fontWeight} ${layout.text.fontSize}px ${layout.text.fontFamily}`;
+      ctx.font = `${layout.text.fontWeight} ${layout.text.fontSize}px ${layout.text.fontFamily}`;
       ctx.textAlign = layout.text.align;
       ctx.textBaseline = "middle";
-
-      if (layout.text.effect === "shadow") {
-        ctx.shadowColor = "rgba(0, 0, 0, 0.52)";
-        ctx.shadowBlur = Math.max(2, layout.text.fontSize * 0.1);
-        ctx.shadowOffsetY = Math.max(1, layout.text.fontSize * 0.035);
-      } else {
-        ctx.shadowColor = "transparent";
-        ctx.shadowBlur = 0;
-        ctx.shadowOffsetY = 0;
-      }
-
-      if (layout.text.effect === "outline") {
-        ctx.strokeStyle = "rgba(0, 0, 0, 0.62)";
-        ctx.lineWidth = Math.max(2, layout.text.fontSize * 0.08);
-        ctx.lineJoin = "round";
-      }
+      ctx.shadowColor = "transparent";
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
 
       layout.text.lines.forEach((line, index) => {
         const y = layout.text.y + layout.text.lineHeight * index + layout.text.lineHeight / 2;
-
-        if (layout.text.effect === "outline") {
-          ctx.strokeText(line, layout.text.x, y);
-        }
 
         ctx.fillText(line, layout.text.x, y);
       });

@@ -9,14 +9,14 @@
   }
 
   function sanitizeZipName(name) {
-    return name.replace(/[\\/:*?"<>|]/g, "_");
+    return String(name || "").replace(/[\\/:*?"<>|]/g, "_").trim();
   }
 
   function getFormatConfig(format) {
     const configs = {
-      jpeg: { mimeType: "image/jpeg", extension: "jpg", label: "JPG" },
-      png: { mimeType: "image/png", extension: "png", label: "PNG" },
-      webp: { mimeType: "image/webp", extension: "webp", label: "WEBP" }
+      jpeg: { mimeType: "image/jpeg", extension: "jpg", label: "JPG", supportsQuality: true },
+      png: { mimeType: "image/png", extension: "png", label: "PNG", supportsQuality: false },
+      webp: { mimeType: "image/webp", extension: "webp", label: "WEBP", supportsQuality: true }
     };
 
     return configs[format] || configs.jpeg;
@@ -43,7 +43,7 @@
   }
 
   async function pickSaveFile(name, mimeType, extension) {
-    if (typeof window.showSaveFilePicker !== "function") {
+    if (state.settings.exportDestinationMode === "browser" || typeof window.showSaveFilePicker !== "function") {
       return null;
     }
 
@@ -65,12 +65,17 @@
   }
 
   async function pickDirectory() {
-    if (typeof window.showDirectoryPicker !== "function") {
+    if (state.settings.exportDestinationMode === "browser" || typeof window.showDirectoryPicker !== "function") {
       return null;
     }
 
     try {
-      return await window.showDirectoryPicker({ mode: "readwrite" });
+      let directoryHandle = await window.showDirectoryPicker({ mode: "readwrite" });
+      if (state.settings.exportSubfolderEnabled) {
+        const folderName = sanitizeZipName(state.settings.exportSubfolderName || "Watermarked") || "Watermarked";
+        directoryHandle = await directoryHandle.getDirectoryHandle(folderName, { create: true });
+      }
+      return directoryHandle;
     } catch (error) {
       if (isAbortError(error)) {
         throw new Error("已取消导出。");
@@ -78,6 +83,30 @@
 
       throw error;
     }
+  }
+
+  async function getUniqueFileHandle(directoryHandle, name) {
+    if (state.settings.existingFileAction !== "rename") {
+      return directoryHandle.getFileHandle(name, { create: true });
+    }
+
+    const lastDot = name.lastIndexOf(".");
+    const base = lastDot > 0 ? name.slice(0, lastDot) : name;
+    const extension = lastDot > 0 ? name.slice(lastDot) : "";
+
+    for (let index = 0; index < 1000; index += 1) {
+      const candidate = index === 0 ? name : `${base}-${index}${extension}`;
+      try {
+        await directoryHandle.getFileHandle(candidate, { create: false });
+      } catch (error) {
+        if (error && error.name === "NotFoundError") {
+          return directoryHandle.getFileHandle(candidate, { create: true });
+        }
+        throw error;
+      }
+    }
+
+    return directoryHandle.getFileHandle(`${base}-${Date.now()}${extension}`, { create: true });
   }
 
   function makeCrc32Table() {
@@ -126,6 +155,18 @@
   function uint32(value) {
     const bytes = new Uint8Array(4);
     new DataView(bytes.buffer).setUint32(0, value >>> 0, true);
+    return bytes;
+  }
+
+  function uint16be(value) {
+    const bytes = new Uint8Array(2);
+    new DataView(bytes.buffer).setUint16(0, value, false);
+    return bytes;
+  }
+
+  function uint32be(value) {
+    const bytes = new Uint8Array(4);
+    new DataView(bytes.buffer).setUint32(0, value >>> 0, false);
     return bytes;
   }
 
@@ -212,25 +253,57 @@
     return new Blob([...localParts, ...centralParts, ...endRecord], { type: "application/zip" });
   }
 
-  function getOutputSize(photo, longEdge) {
-    const targetLongEdge = Math.max(1, Number(longEdge) || 3000);
-
-    if (photo.width >= photo.height) {
-      return {
-        width: targetLongEdge,
-        height: Math.max(1, Math.round((photo.height / photo.width) * targetLongEdge))
-      };
-    }
+  function getOutputSize(photo) {
+    const targetWidth = Math.max(1, Number(state.settings.resizeWidth) || photo.width || 1);
+    const targetHeight = Math.max(1, Number(state.settings.resizeHeight) || photo.height || 1);
+    const scale = Math.min(targetWidth / Math.max(1, photo.width), targetHeight / Math.max(1, photo.height));
 
     return {
-      width: Math.max(1, Math.round((photo.width / photo.height) * targetLongEdge)),
-      height: targetLongEdge
+      width: Math.max(1, Math.round(photo.width * scale)),
+      height: Math.max(1, Math.round(photo.height * scale))
     };
+  }
+
+  function applyOutputSharpening(ctx, width, height, level) {
+    const amounts = {
+      low: 0.18,
+      standard: 0.32,
+      high: 0.5
+    };
+    const amount = amounts[level] || 0;
+
+    if (!amount || width < 3 || height < 3) {
+      return;
+    }
+
+    const source = ctx.getImageData(0, 0, width, height);
+    const output = ctx.createImageData(width, height);
+    const input = source.data;
+    const data = output.data;
+
+    data.set(input);
+
+    for (let y = 1; y < height - 1; y += 1) {
+      for (let x = 1; x < width - 1; x += 1) {
+        const offset = (y * width + x) * 4;
+
+        for (let channel = 0; channel < 3; channel += 1) {
+          const center = input[offset + channel];
+          const top = input[((y - 1) * width + x) * 4 + channel];
+          const bottom = input[((y + 1) * width + x) * 4 + channel];
+          const left = input[(y * width + x - 1) * 4 + channel];
+          const right = input[(y * width + x + 1) * 4 + channel];
+          data[offset + channel] = Math.max(0, Math.min(255, center * (1 + amount * 4) - (top + bottom + left + right) * amount));
+        }
+      }
+    }
+
+    ctx.putImageData(output, 0, 0);
   }
 
   async function renderExportCanvas(photo) {
     const { watermark, settings, textWatermark } = state;
-    const outputSize = getOutputSize(photo, settings.outputLongEdge);
+    const outputSize = getOutputSize(photo);
     const exportCanvas = document.createElement("canvas");
     exportCanvas.width = outputSize.width;
     exportCanvas.height = outputSize.height;
@@ -240,9 +313,12 @@
       const ctx = exportCanvas.getContext("2d", {
         colorSpace: settings.colorSpace === "display-p3" ? "display-p3" : "srgb"
       });
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, outputSize.width, outputSize.height);
       ctx.drawImage(sourceImage, 0, 0, outputSize.width, outputSize.height);
+      applyOutputSharpening(ctx, outputSize.width, outputSize.height, settings.outputSharpening);
       drawWatermark(ctx, watermark.image, settings, outputSize.width, outputSize.height, textWatermark);
 
       return exportCanvas;
@@ -263,15 +339,200 @@
     });
   }
 
+  function escapeXml(value) {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;");
+  }
+
+  function getMetadataXml() {
+    const { metadataMode, metadataAuthor, metadataCopyright, metadataContact } = state.settings;
+    const includeContact = ["copyright-contact", "all-except-camera", "all"].includes(metadataMode);
+    const author = escapeXml(includeContact ? metadataAuthor : "");
+    const rights = escapeXml(metadataCopyright);
+    const contact = escapeXml(includeContact ? metadataContact : "");
+
+    return `<?xpacket begin="\uFEFF" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+   xmlns:dc="http://purl.org/dc/elements/1.1/"
+   xmlns:xmpRights="http://ns.adobe.com/xap/1.0/rights/"
+   xmlns:Iptc4xmpCore="http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/">
+   <dc:creator><rdf:Seq><rdf:li>${author}</rdf:li></rdf:Seq></dc:creator>
+   <dc:rights><rdf:Alt><rdf:li xml:lang="x-default">${rights}</rdf:li></rdf:Alt></dc:rights>
+   <xmpRights:Marked>True</xmpRights:Marked>
+   <Iptc4xmpCore:CreatorContactInfo rdf:parseType="Resource"><Iptc4xmpCore:CiEmailWork>${contact}</Iptc4xmpCore:CiEmailWork></Iptc4xmpCore:CreatorContactInfo>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>`;
+  }
+
+  function hasMetadataContent() {
+    const { metadataMode, metadataAuthor, metadataCopyright, metadataContact } = state.settings;
+    return metadataMode !== "none" && Boolean(`${metadataAuthor}${metadataCopyright}${metadataContact}`.trim());
+  }
+
+  function concatBytes(parts) {
+    const size = parts.reduce((sum, part) => sum + part.length, 0);
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+
+    parts.forEach((part) => {
+      bytes.set(part, offset);
+      offset += part.length;
+    });
+
+    return bytes;
+  }
+
+  function addJpegMetadata(bytes, xmpBytes) {
+    if (bytes[0] !== 0xff || bytes[1] !== 0xd8) {
+      throw new Error("不是有效 JPEG 文件");
+    }
+
+    const header = new TextEncoder().encode("http://ns.adobe.com/xap/1.0/\0");
+    const payload = concatBytes([header, xmpBytes]);
+    const length = payload.length + 2;
+
+    if (length > 65535) {
+      throw new Error("XMP 元数据过大");
+    }
+
+    const segment = concatBytes([new Uint8Array([0xff, 0xe1]), uint16be(length), payload]);
+    return concatBytes([bytes.slice(0, 2), segment, bytes.slice(2)]);
+  }
+
+  function makePngChunk(type, data) {
+    const typeBytes = new TextEncoder().encode(type);
+    const crcBytes = concatBytes([typeBytes, data]);
+    return concatBytes([uint32be(data.length), typeBytes, data, uint32be(getCrc32(crcBytes))]);
+  }
+
+  function addPngMetadata(bytes, xmpBytes) {
+    const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+    if (!signature.every((value, index) => bytes[index] === value)) {
+      throw new Error("不是有效 PNG 文件");
+    }
+
+    let offset = 8;
+    let iendOffset = -1;
+    const decoder = new TextDecoder();
+
+    while (offset + 12 <= bytes.length) {
+      const length = new DataView(bytes.buffer, bytes.byteOffset + offset, 4).getUint32(0, false);
+      const type = decoder.decode(bytes.slice(offset + 4, offset + 8));
+      if (type === "IEND") {
+        iendOffset = offset;
+        break;
+      }
+      offset += 12 + length;
+    }
+
+    if (iendOffset < 0) {
+      throw new Error("PNG 文件缺少 IEND");
+    }
+
+    const keyword = new TextEncoder().encode("XML:com.adobe.xmp");
+    const data = concatBytes([
+      keyword,
+      new Uint8Array([0, 0, 0, 0, 0]),
+      xmpBytes
+    ]);
+    const chunk = makePngChunk("iTXt", data);
+
+    return concatBytes([bytes.slice(0, iendOffset), chunk, bytes.slice(iendOffset)]);
+  }
+
+  function addWebpMetadata(bytes, xmpBytes) {
+    const decoder = new TextDecoder();
+    if (decoder.decode(bytes.slice(0, 4)) !== "RIFF" || decoder.decode(bytes.slice(8, 12)) !== "WEBP") {
+      throw new Error("不是有效 WEBP 文件");
+    }
+
+    const pad = xmpBytes.length % 2 ? new Uint8Array([0]) : new Uint8Array();
+    const chunk = concatBytes([new TextEncoder().encode("XMP "), uint32(xmpBytes.length), xmpBytes, pad]);
+    const output = concatBytes([bytes.slice(0, 12), bytes.slice(12), chunk]);
+    new DataView(output.buffer).setUint32(4, output.length - 8, true);
+    return output;
+  }
+
+  async function addMetadata(blob, format, warnings, name) {
+    if (!hasMetadataContent()) {
+      return blob;
+    }
+
+    try {
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      const xmpBytes = new TextEncoder().encode(getMetadataXml());
+      let outputBytes;
+
+      if (format.extension === "jpg") {
+        outputBytes = addJpegMetadata(bytes, xmpBytes);
+      } else if (format.extension === "png") {
+        outputBytes = addPngMetadata(bytes, xmpBytes);
+      } else if (format.extension === "webp") {
+        outputBytes = addWebpMetadata(bytes, xmpBytes);
+      } else {
+        return blob;
+      }
+
+      return new Blob([outputBytes], { type: format.mimeType });
+    } catch (error) {
+      warnings.push(`${name} 元数据写入失败：${error.message}`);
+      return blob;
+    }
+  }
+
+  async function createEncodedBlob(canvas, format, warnings, name) {
+    const quality = Math.min(1, Math.max(0.01, Number(state.settings.exportQuality) || 0.95));
+    const targetBytes = state.settings.targetFileSizeEnabled
+      ? Math.max(1, Number(state.settings.targetFileSizeKb) || 1) * 1024
+      : 0;
+
+    if (!targetBytes || !format.supportsQuality) {
+      if (targetBytes && !format.supportsQuality) {
+        warnings.push(`${format.label} 不支持通过品质限制文件大小，已按原设置导出。`);
+      }
+      return canvasToBlob(canvas, format.mimeType, quality);
+    }
+
+    let currentQuality = quality;
+    let blob = await canvasToBlob(canvas, format.mimeType, currentQuality);
+
+    while (blob.size > targetBytes && currentQuality > 0.4) {
+      currentQuality = Math.max(0.4, currentQuality - 0.05);
+      blob = await canvasToBlob(canvas, format.mimeType, currentQuality);
+    }
+
+    if (blob.size > targetBytes) {
+      warnings.push(`${name} 已降到最低品质 40%，仍超过目标大小。`);
+    }
+
+    return blob;
+  }
+
   async function createImageDownload(photo, options = {}) {
-    const { createUrl = true } = options;
+    const { createUrl = true, warnings = [] } = options;
     const format = getFormatConfig(state.settings.outputFormat);
     const canvas = await renderExportCanvas(photo);
 
     try {
-      const blob = await canvasToBlob(canvas, format.mimeType, state.settings.exportQuality);
-      const url = createUrl ? URL.createObjectURL(blob) : "";
+      let blob = await createEncodedBlob(canvas, format, warnings, photo.name);
       const name = getExportFileName(photo);
+      blob = await addMetadata(blob, format, warnings, name);
+      if (
+        state.settings.targetFileSizeEnabled
+        && format.supportsQuality
+        && blob.size > Math.max(1, Number(state.settings.targetFileSizeKb) || 1) * 1024
+      ) {
+        warnings.push(`${name} 最终文件超过目标大小。`);
+      }
+      const url = createUrl ? URL.createObjectURL(blob) : "";
 
       return { name, blob, url, type: format.mimeType };
     } finally {
@@ -294,6 +555,7 @@
   async function exportWatermarkedJpg(options = {}) {
     const { onProgress } = options;
     const { photo, photos, watermark, settings, textWatermark } = state;
+    const warnings = [];
 
     if (!photo.image) {
       throw new Error("请先导入图片");
@@ -310,8 +572,19 @@
     const delivery = exportPhotos.length > 1 ? settings.exportDelivery : "separate";
     const total = exportPhotos.length;
 
+    if (settings.exportDestinationMode === "picker" && typeof window.showSaveFilePicker !== "function") {
+      warnings.push("当前浏览器不支持保存位置选择，已退回浏览器默认下载。");
+    }
+
+    if (["all-except-camera", "all"].includes(settings.metadataMode)) {
+      warnings.push("浏览器 Canvas 导出无法完整保留原始元数据，已尽量写入版权和联系信息。");
+    }
+
     if (delivery === "separate") {
       const directoryHandle = exportPhotos.length > 1 ? await pickDirectory() : null;
+      if (exportPhotos.length > 1 && settings.exportDestinationMode === "picker" && !directoryHandle) {
+        warnings.push("当前浏览器不支持选择文件夹，批量文件将逐个下载。");
+      }
       const singleFileHandle = exportPhotos.length === 1
         ? await pickSaveFile(getExportFileName(exportPhotos[0]), format.mimeType, format.extension)
         : null;
@@ -330,17 +603,16 @@
         });
         await waitForPaint();
         try {
-          const download = await createImageDownload(exportPhoto, { createUrl: needsUrl });
+          const download = await createImageDownload(exportPhoto, { createUrl: needsUrl, warnings });
 
           if (directoryHandle) {
-            const fileHandle = await directoryHandle.getFileHandle(download.name, { create: true });
+            const fileHandle = await getUniqueFileHandle(directoryHandle, download.name);
+            const savedName = fileHandle.name || download.name;
             await writeBlobToFileHandle(fileHandle, download.blob);
-            URL.revokeObjectURL(download.url);
-            downloads.push({ name: download.name, url: "", type: download.type, saved: true });
+            downloads.push({ name: savedName, url: "", type: download.type, saved: true });
           } else if (exportPhotos.length === 1) {
             if (singleFileHandle) {
               await writeBlobToFileHandle(singleFileHandle, download.blob);
-              URL.revokeObjectURL(download.url);
               downloads.push({ name: download.name, url: "", type: download.type, saved: true });
             } else {
               triggerDownload(download.url, download.name);
@@ -367,7 +639,8 @@
       return {
         count: exportPhotos.length,
         formatLabel: format.label,
-        downloads
+        downloads,
+        warnings
       };
     }
 
@@ -387,7 +660,7 @@
       });
       await waitForPaint();
       try {
-        const download = await createImageDownload(exportPhoto, { createUrl: false });
+        const download = await createImageDownload(exportPhoto, { createUrl: false, warnings });
         imageFiles.push({
           name: sanitizeZipName(download.name),
           blob: download.blob,
@@ -423,7 +696,8 @@
       return {
         count: exportPhotos.length,
         formatLabel: format.label,
-        downloads: [{ name: zipName, url: "", type: "application/zip", saved: true }]
+        downloads: [{ name: zipName, url: "", type: "application/zip", saved: true }],
+        warnings
       };
     }
 
@@ -433,7 +707,8 @@
     return {
       count: exportPhotos.length,
       formatLabel: format.label,
-      downloads: [{ name: zipName, url: zipUrl, type: "application/zip" }]
+      downloads: [{ name: zipName, url: zipUrl, type: "application/zip" }],
+      warnings
     };
   }
 

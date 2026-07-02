@@ -3,9 +3,9 @@
     appendPhotos,
     clearPhotoSelection,
     deleteSelectedPhotos,
-    previewPhoto,
     selectPhotoRange,
     selectAllPhotos,
+    selectSinglePhoto,
     state,
     togglePhotoSelection,
     updateTextWatermark,
@@ -26,6 +26,8 @@
   const THUMBNAIL_MAX_LONG_EDGE = 260;
   const PREVIEW_JPEG_QUALITY = 0.86;
   const THUMBNAIL_JPEG_QUALITY = 0.78;
+  const INITIAL_IMPORT_VISIBLE_COUNT = 4;
+  const IMPORT_RENDER_BATCH_SIZE = 4;
 
   function $(selector) {
     return document.querySelector(selector);
@@ -34,7 +36,7 @@
   function setMessage(text, type = "") {
     clearFallbackDownloadUrls();
     elements.messageBar.textContent = text;
-    elements.messageBar.className = `message-bar ${type}`.trim();
+    elements.messageBar.className = `message-bar ${type || (text ? "info" : "")}`.trim();
   }
 
   function clearFallbackDownloadUrls() {
@@ -102,6 +104,13 @@
     });
 
     elements.messageBar.appendChild(links);
+
+    if (result.warnings && result.warnings.length > 0) {
+      const warnings = document.createElement("span");
+      warnings.className = "export-warnings";
+      warnings.textContent = result.warnings.join("；");
+      elements.messageBar.appendChild(warnings);
+    }
   }
 
   function updateWatermarkStatus() {
@@ -109,10 +118,80 @@
     elements.watermarkStatus.className = `notice ${state.watermark.status === "ready" ? "success" : "error"}`;
   }
 
-  function applyTheme(theme) {
-    document.body.dataset.theme = theme === "light" ? "light" : "dark";
-    elements.themeToggle.checked = theme === "light";
-    localStorage.setItem("watermarkStudioTheme", document.body.dataset.theme);
+  function updateThemeDom(theme) {
+    const nextTheme = theme === "light" ? "light" : "dark";
+    document.body.dataset.theme = nextTheme;
+    elements.themeToggle.checked = nextTheme === "light";
+    if (elements.faviconLink) {
+      elements.faviconLink.href = nextTheme === "light"
+        ? "assets/icons/theme-light.png"
+        : "assets/icons/theme-dark.png";
+    }
+    localStorage.setItem("watermarkStudioTheme", nextTheme);
+  }
+
+  function prefersReducedMotion() {
+    return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  function getThemeRevealGeometry(sourceElement) {
+    const rect = sourceElement && sourceElement.getBoundingClientRect
+      ? sourceElement.getBoundingClientRect()
+      : null;
+    const x = rect ? rect.left + rect.width / 2 : window.innerWidth - 32;
+    const y = rect ? rect.top + rect.height / 2 : 32;
+    const endRadius = Math.ceil(Math.hypot(
+      Math.max(x, window.innerWidth - x),
+      Math.max(y, window.innerHeight - y)
+    )) + 80;
+
+    return { x, y, endRadius };
+  }
+
+  function setThemeTransitionGeometry(geometry) {
+    document.documentElement.style.setProperty("--theme-transition-x", `${geometry.x}px`);
+    document.documentElement.style.setProperty("--theme-transition-y", `${geometry.y}px`);
+    document.documentElement.style.setProperty("--theme-transition-radius", `${geometry.endRadius}px`);
+  }
+
+  function clearThemeTransitionState() {
+    document.documentElement.classList.remove("theme-transitioning");
+    document.body.classList.remove("theme-transitioning", "theme-fallback-transition");
+    document.documentElement.style.removeProperty("--theme-transition-x");
+    document.documentElement.style.removeProperty("--theme-transition-y");
+    document.documentElement.style.removeProperty("--theme-transition-radius");
+  }
+
+  function applyTheme(theme, options = {}) {
+    const nextTheme = theme === "light" ? "light" : "dark";
+
+    if (!options.animate || prefersReducedMotion()) {
+      clearThemeTransitionState();
+      updateThemeDom(nextTheme);
+      return;
+    }
+
+    if (typeof document.startViewTransition !== "function") {
+      document.body.classList.add("theme-fallback-transition");
+      updateThemeDom(nextTheme);
+      window.setTimeout(clearThemeTransitionState, 460);
+      return;
+    }
+
+    setThemeTransitionGeometry(getThemeRevealGeometry(options.sourceElement || elements.themeToggle));
+    document.documentElement.classList.add("theme-transitioning");
+    document.body.classList.add("theme-transitioning");
+
+    try {
+      const transition = document.startViewTransition(() => {
+        updateThemeDom(nextTheme);
+      });
+
+      transition.finished.then(clearThemeTransitionState, clearThemeTransitionState);
+    } catch (error) {
+      updateThemeDom(nextTheme);
+      clearThemeTransitionState();
+    }
   }
 
   function getOutputFormatLabel(format) {
@@ -127,21 +206,34 @@
 
   function getOutputSizeLabel() {
     const { photo, settings } = state;
-    const longEdge = Math.max(1, Number(settings.outputLongEdge) || 3000);
+    const targetWidth = Math.max(1, Number(settings.resizeWidth) || 3000);
+    const targetHeight = Math.max(1, Number(settings.resizeHeight) || 3000);
 
     if (!photo.width || !photo.height) {
-      return `${longEdge} x --`;
+      return `${targetWidth} x ${targetHeight}`;
     }
 
-    if (photo.width >= photo.height) {
-      return `${longEdge} x ${Math.max(1, Math.round((photo.height / photo.width) * longEdge))}`;
-    }
+    const scale = Math.min(targetWidth / photo.width, targetHeight / photo.height);
+    return `${Math.max(1, Math.round(photo.width * scale))} x ${Math.max(1, Math.round(photo.height * scale))}`;
+  }
 
-    return `${Math.max(1, Math.round((photo.width / photo.height) * longEdge))} x ${longEdge}`;
+  function getFilenamePreview() {
+    const photoName = state.photo.name || "original.jpg";
+    const lastDot = photoName.lastIndexOf(".");
+    const baseName = lastDot > 0 ? photoName.slice(0, lastDot) : photoName;
+    const extension = getOutputFormatLabel(state.settings.outputFormat).toLowerCase().replace("jpg", "jpg");
+    const safeName = `${state.settings.filenamePrefix || ""}${baseName}${state.settings.filenameSuffix || ""}`
+      .replace(/[\\/:*?"<>|]/g, "_")
+      .trim() || "watermarked";
+
+    return `${safeName}.${extension}`;
   }
 
   function updateExportButtonLabel() {
-    elements.exportButton.textContent = `导出 ${getOutputFormatLabel(state.settings.outputFormat)}`;
+    elements.exportButton.textContent = "导出";
+    if (elements.confirmExportButton) {
+      elements.confirmExportButton.textContent = "导出";
+    }
   }
 
   function updateControlValues() {
@@ -149,20 +241,31 @@
     elements.opacityValue.textContent = String(Math.round(state.settings.opacity * 100));
     elements.marginValue.textContent = `${state.settings.margin}%`;
     elements.qualityValue.textContent = String(Math.round(state.settings.exportQuality * 100));
-    elements.longEdgeInput.value = String(state.settings.outputLongEdge);
     elements.outputSizeValue.textContent = getOutputSizeLabel();
     elements.filenamePrefixInput.value = state.settings.filenamePrefix;
     elements.filenameSuffixInput.value = state.settings.filenameSuffix;
+    elements.filenamePreviewValue.textContent = getFilenamePreview();
     elements.formatSelect.value = state.settings.outputFormat;
     elements.colorSpaceSelect.value = state.settings.colorSpace;
+    elements.targetFileSizeToggle.checked = state.settings.targetFileSizeEnabled;
+    elements.targetFileSizeInput.value = String(state.settings.targetFileSizeKb);
+    elements.targetFileSizeInput.disabled = !state.settings.targetFileSizeEnabled || state.settings.outputFormat === "png";
+    elements.qualityRange.disabled = state.settings.outputFormat === "png";
+    elements.qualityHint.textContent = state.settings.outputFormat === "png" ? "PNG 不适用品质" : "JPG / WEBP";
+    elements.resizeWidthInput.value = String(state.settings.resizeWidth);
+    elements.resizeHeightInput.value = String(state.settings.resizeHeight);
+    elements.resizePercentInput.value = String(state.settings.resizePercent);
+    elements.resizeAspectToggle.checked = state.settings.resizeAspectLocked;
+    elements.metadataSelect.value = state.settings.metadataMode;
+    elements.metadataFields.classList.toggle("hidden", state.settings.metadataMode === "none");
+    elements.metadataAuthorInput.value = state.settings.metadataAuthor;
+    elements.metadataCopyrightInput.value = state.settings.metadataCopyright;
+    elements.metadataContactInput.value = state.settings.metadataContact;
+    elements.outputSharpeningSelect.value = state.settings.outputSharpening;
     if (document.activeElement !== elements.textWatermarkInput) {
       elements.textWatermarkInput.value = state.textWatermark.text;
     }
     elements.textColorInput.value = state.textWatermark.color;
-    elements.textFontSelect.value = state.textWatermark.fontFamily;
-    elements.textWeightSelect.value = state.textWatermark.fontWeight;
-    elements.textItalicToggle.checked = state.textWatermark.italic;
-    elements.textEffectSelect.value = state.textWatermark.effect;
     elements.invertToggle.checked = state.settings.invertWatermark;
     elements.watermarkLayoutSelect.value = state.settings.watermarkLayout;
     updateExportButtonLabel();
@@ -237,7 +340,7 @@
         } else if (event.ctrlKey || event.metaKey) {
           togglePhotoSelection(index);
         } else {
-          previewPhoto(index);
+          selectSinglePhoto(index);
         }
 
         renderThumbnails();
@@ -267,7 +370,54 @@
     };
   }
 
-  function createResizedImageUrl(sourceImage, size, quality) {
+  function getImageWidth(image) {
+    return image.naturalWidth || image.width || 1;
+  }
+
+  function getImageHeight(image) {
+    return image.naturalHeight || image.height || 1;
+  }
+
+  async function loadSourcePhotoImage(file, objectUrl) {
+    if (typeof createImageBitmap === "function") {
+      try {
+        return await createImageBitmap(file, { imageOrientation: "from-image" });
+      } catch (error) {
+        return loadImageFromUrl(objectUrl);
+      }
+    }
+
+    return loadImageFromUrl(objectUrl);
+  }
+
+  async function loadPreviewImage(blob, url) {
+    if (typeof createImageBitmap === "function") {
+      try {
+        return await createImageBitmap(blob);
+      } catch (error) {
+        return loadImageFromUrl(url);
+      }
+    }
+
+    return loadImageFromUrl(url);
+  }
+
+  function releaseLoadedImage(image) {
+    if (!image) {
+      return;
+    }
+
+    if (typeof image.close === "function") {
+      image.close();
+      return;
+    }
+
+    if (typeof image.removeAttribute === "function") {
+      image.removeAttribute("src");
+    }
+  }
+
+  function createResizedImageBlob(sourceImage, size, quality) {
     const canvas = document.createElement("canvas");
     canvas.width = size.width;
     canvas.height = size.height;
@@ -285,7 +435,7 @@
         canvas.height = 1;
 
         if (blob) {
-          resolve(URL.createObjectURL(blob));
+          resolve(blob);
         } else {
           reject(new Error("Preview image generation failed"));
         }
@@ -293,37 +443,49 @@
     });
   }
 
+  async function createResizedImageResult(sourceImage, size, quality) {
+    const blob = await createResizedImageBlob(sourceImage, size, quality);
+
+    return {
+      blob,
+      url: URL.createObjectURL(blob)
+    };
+  }
+
   async function createDerivedPhotoImages(sourceImage) {
-    const width = sourceImage.naturalWidth;
-    const height = sourceImage.naturalHeight;
+    const width = getImageWidth(sourceImage);
+    const height = getImageHeight(sourceImage);
     const previewSize = getScaledSize(width, height, PREVIEW_MAX_LONG_EDGE);
     const thumbnailSize = getScaledSize(width, height, THUMBNAIL_MAX_LONG_EDGE);
-    const previewUrl = await createResizedImageUrl(sourceImage, previewSize, PREVIEW_JPEG_QUALITY);
+    const [preview, thumbnail] = await Promise.all([
+      createResizedImageResult(sourceImage, previewSize, PREVIEW_JPEG_QUALITY),
+      createResizedImageResult(sourceImage, thumbnailSize, THUMBNAIL_JPEG_QUALITY)
+    ]);
 
-    try {
-      const thumbnailUrl = await createResizedImageUrl(sourceImage, thumbnailSize, THUMBNAIL_JPEG_QUALITY);
-      return { previewUrl, thumbnailUrl };
-    } catch (error) {
-      URL.revokeObjectURL(previewUrl);
-      throw error;
-    }
+    return {
+      previewBlob: preview.blob,
+      previewUrl: preview.url,
+      thumbnailUrl: thumbnail.url
+    };
   }
 
   async function loadPhotoFile(file) {
     const objectUrl = URL.createObjectURL(file);
     let previewUrl = "";
     let thumbnailUrl = "";
+    let sourceImage = null;
+    let image = null;
 
     try {
-      const sourceImage = await loadImageFromUrl(objectUrl);
+      sourceImage = await loadSourcePhotoImage(file, objectUrl);
       const derivedImages = await createDerivedPhotoImages(sourceImage);
       previewUrl = derivedImages.previewUrl;
       thumbnailUrl = derivedImages.thumbnailUrl;
 
-      const image = await loadImageFromUrl(previewUrl);
-      const width = sourceImage.naturalWidth;
-      const height = sourceImage.naturalHeight;
-      sourceImage.removeAttribute("src");
+      image = await loadPreviewImage(derivedImages.previewBlob, previewUrl);
+      const width = getImageWidth(sourceImage);
+      const height = getImageHeight(sourceImage);
+      releaseLoadedImage(sourceImage);
 
       return {
         file,
@@ -336,6 +498,8 @@
         height
       };
     } catch (error) {
+      releaseLoadedImage(sourceImage);
+      releaseLoadedImage(image);
       [objectUrl, previewUrl, thumbnailUrl].forEach((url) => {
         if (url) {
           URL.revokeObjectURL(url);
@@ -345,7 +509,28 @@
     }
   }
 
-  async function handlePhotoUpload(event) {
+  function getImportConcurrency(fileCount) {
+    const hardwareConcurrency = navigator.hardwareConcurrency || 4;
+    const preferred = Math.max(2, Math.floor(hardwareConcurrency / 2));
+
+    return Math.min(fileCount, 4, preferred);
+  }
+
+  function setImportSummaryMessage(importedCount, failedCount) {
+    if (importedCount === 0) {
+      setMessage("图片加载失败，请选择有效图片。", "error");
+      return;
+    }
+
+    setMessage(
+      failedCount > 0
+        ? `已导入 ${importedCount} 张图片，${failedCount} 张加载失败或格式不支持。`
+        : `已追加导入 ${importedCount} 张图片。`,
+      failedCount > 0 ? "error" : "success"
+    );
+  }
+
+  async function handlePhotoUploadOptimized(event) {
     const files = Array.from(event.target.files || []);
 
     if (files.length === 0) {
@@ -363,40 +548,97 @@
 
     let importedCount = 0;
     let failedCount = unsupportedCount;
+    let completedCount = 0;
+    const visibleFiles = validFiles.slice(0, INITIAL_IMPORT_VISIBLE_COUNT);
+    const remainingFiles = validFiles.slice(INITIAL_IMPORT_VISIBLE_COUNT);
 
     if (unsupportedCount > 0) {
       setMessage(`已跳过 ${unsupportedCount} 个不支持的文件，继续导入有效图片。`, "error");
       await waitForNextFrame();
     }
 
-    for (let index = 0; index < validFiles.length; index += 1) {
-      const file = validFiles[index];
-      setMessage(`正在导入 ${index + 1}/${validFiles.length}：${file.name}`);
+    for (let index = 0; index < visibleFiles.length; index += 1) {
+      setMessage(`正在导入 ${completedCount}/${validFiles.length}`);
       await waitForNextFrame();
 
       try {
-        const photo = await loadPhotoFile(file);
+        const photo = await loadPhotoFile(visibleFiles[index]);
         importedCount += 1;
         appendPhotos([photo]);
         renderThumbnails();
         refreshPreview();
-        setMessage(`已导入 ${importedCount}/${validFiles.length}：${file.name}`, "success");
       } catch (error) {
         failedCount += 1;
+      } finally {
+        completedCount += 1;
+        setMessage(`正在导入 ${completedCount}/${validFiles.length}`);
+        await waitForNextFrame();
       }
     }
 
-    if (importedCount === 0) {
-      setMessage("图片加载失败，请选择有效图片。", "error");
-    } else {
-      setMessage(
-        failedCount > 0
-          ? `已导入 ${importedCount} 张图片，${failedCount} 张加载失败或格式不支持。`
-          : `已追加导入 ${importedCount} 张图片。`,
-        failedCount > 0 ? "error" : "success"
-      );
+    if (remainingFiles.length > 0) {
+      let nextFileIndex = 0;
+      let nextAppendIndex = 0;
+      let lastRenderCompletedCount = completedCount;
+      const loadedPhotos = new Array(remainingFiles.length);
+      const settledFiles = new Array(remainingFiles.length).fill(false);
+
+      function flushImportedPhotos(force = false) {
+        if (!force && completedCount - lastRenderCompletedCount < IMPORT_RENDER_BATCH_SIZE) {
+          return;
+        }
+
+        const readyPhotos = [];
+
+        while (settledFiles[nextAppendIndex]) {
+          if (loadedPhotos[nextAppendIndex]) {
+            readyPhotos.push(loadedPhotos[nextAppendIndex]);
+            loadedPhotos[nextAppendIndex] = null;
+          }
+
+          nextAppendIndex += 1;
+        }
+
+        if (readyPhotos.length > 0) {
+          appendPhotos(readyPhotos);
+          renderThumbnails();
+          refreshPreview();
+        }
+
+        lastRenderCompletedCount = completedCount;
+      }
+
+      async function importWorker() {
+        while (nextFileIndex < remainingFiles.length) {
+          const index = nextFileIndex;
+          nextFileIndex += 1;
+
+          try {
+            loadedPhotos[index] = await loadPhotoFile(remainingFiles[index]);
+            importedCount += 1;
+          } catch (error) {
+            failedCount += 1;
+          } finally {
+            settledFiles[index] = true;
+            completedCount += 1;
+            setMessage(`正在导入 ${completedCount}/${validFiles.length}`);
+            flushImportedPhotos(false);
+            await waitForNextFrame();
+          }
+        }
+      }
+
+      await Promise.all(Array.from({ length: getImportConcurrency(remainingFiles.length) }, importWorker));
+      flushImportedPhotos(true);
     }
 
+    if (importedCount > 0) {
+      selectSinglePhoto(state.photos.length - 1);
+      renderThumbnails();
+      refreshPreview();
+    }
+
+    setImportSummaryMessage(importedCount, failedCount);
     event.target.value = "";
   }
 
@@ -466,29 +708,6 @@
       updateTextWatermark({ color: elements.textColorInput.value });
       refreshPreview();
     });
-
-    elements.textFontSelect.addEventListener("change", () => {
-      updateTextWatermark({ fontFamily: elements.textFontSelect.value });
-      updateControlValues();
-      refreshPreview();
-    });
-
-    elements.textWeightSelect.addEventListener("change", () => {
-      updateTextWatermark({ fontWeight: elements.textWeightSelect.value });
-      updateControlValues();
-      refreshPreview();
-    });
-
-    elements.textItalicToggle.addEventListener("change", () => {
-      updateTextWatermark({ italic: elements.textItalicToggle.checked });
-      refreshPreview();
-    });
-
-    elements.textEffectSelect.addEventListener("change", () => {
-      updateTextWatermark({ effect: elements.textEffectSelect.value });
-      updateControlValues();
-      refreshPreview();
-    });
   }
 
   function bindInvertToggle() {
@@ -506,18 +725,144 @@
     elements.themeToggle.addEventListener("change", () => {
       const theme = elements.themeToggle.checked ? "light" : "dark";
       updateWatermarkSettings({ theme });
-      applyTheme(theme);
+      applyTheme(theme, { animate: true, sourceElement: elements.themeToggle });
     });
   }
 
-  function bindLongEdgeInput() {
-    elements.longEdgeInput.addEventListener("input", () => {
-      const value = Math.min(10000, Math.max(50, Number(elements.longEdgeInput.value) || 3000));
-      updateWatermarkSettings({ outputLongEdge: value });
+  function getCurrentAspectRatio() {
+    if (!state.photo.width || !state.photo.height) {
+      return Math.max(1, Number(state.settings.resizeWidth) || 3000) / Math.max(1, Number(state.settings.resizeHeight) || 3000);
+    }
+
+    return state.photo.width / state.photo.height;
+  }
+
+  function clampNumber(value, min, max, fallback) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+      return fallback;
+    }
+
+    return Math.min(max, Math.max(min, number));
+  }
+
+  function updateResizeFromWidth() {
+    const width = clampNumber(elements.resizeWidthInput.value, 1, 50000, state.settings.resizeWidth);
+    const nextSettings = { resizeWidth: width };
+
+    if (state.settings.resizeAspectLocked) {
+      nextSettings.resizeHeight = Math.max(1, Math.round(width / getCurrentAspectRatio()));
+    }
+
+    updateWatermarkSettings(nextSettings);
+    updateControlValues();
+  }
+
+  function updateResizeFromHeight() {
+    const height = clampNumber(elements.resizeHeightInput.value, 1, 50000, state.settings.resizeHeight);
+    const nextSettings = { resizeHeight: height };
+
+    if (state.settings.resizeAspectLocked) {
+      nextSettings.resizeWidth = Math.max(1, Math.round(height * getCurrentAspectRatio()));
+    }
+
+    updateWatermarkSettings(nextSettings);
+    updateControlValues();
+  }
+
+  function updateResizeFromPercent() {
+    const percent = clampNumber(elements.resizePercentInput.value, 1, 1000, state.settings.resizePercent);
+    const baseWidth = state.photo.width || state.settings.resizeWidth || 3000;
+    const baseHeight = state.photo.height || state.settings.resizeHeight || 3000;
+
+    updateWatermarkSettings({
+      resizePercent: percent,
+      resizeWidth: Math.max(1, Math.round(baseWidth * (percent / 100))),
+      resizeHeight: Math.max(1, Math.round(baseHeight * (percent / 100)))
+    });
+    updateControlValues();
+  }
+
+  function syncResizeToCurrentPhotoRatio() {
+    if (!state.settings.resizeAspectLocked || !state.photo.width || !state.photo.height) {
+      return;
+    }
+
+    const width = clampNumber(state.settings.resizeWidth, 1, 50000, state.photo.width);
+    updateWatermarkSettings({
+      resizeWidth: width,
+      resizeHeight: Math.max(1, Math.round(width / getCurrentAspectRatio()))
+    });
+  }
+
+  function saveMetadataDefaults() {
+    localStorage.setItem("watermarkStudioMetadata", JSON.stringify({
+      author: state.settings.metadataAuthor,
+      copyright: state.settings.metadataCopyright,
+      contact: state.settings.metadataContact
+    }));
+  }
+
+  function loadMetadataDefaults() {
+    try {
+      const savedMetadata = JSON.parse(localStorage.getItem("watermarkStudioMetadata") || "{}");
+      updateWatermarkSettings({
+        metadataAuthor: savedMetadata.author || "",
+        metadataCopyright: savedMetadata.copyright || "",
+        metadataContact: savedMetadata.contact || ""
+      });
+    } catch (error) {
+      updateWatermarkSettings({
+        metadataAuthor: "",
+        metadataCopyright: "",
+        metadataContact: ""
+      });
+    }
+  }
+
+  function bindExportSettingsControls() {
+    elements.targetFileSizeToggle.addEventListener("change", () => {
+      updateWatermarkSettings({ targetFileSizeEnabled: elements.targetFileSizeToggle.checked });
       updateControlValues();
     });
 
-    elements.longEdgeInput.addEventListener("blur", () => {
+    elements.targetFileSizeInput.addEventListener("input", () => {
+      updateWatermarkSettings({
+        targetFileSizeKb: clampNumber(elements.targetFileSizeInput.value, 20, 512000, state.settings.targetFileSizeKb)
+      });
+    });
+
+    elements.resizeWidthInput.addEventListener("input", updateResizeFromWidth);
+    elements.resizeHeightInput.addEventListener("input", updateResizeFromHeight);
+    elements.resizePercentInput.addEventListener("input", updateResizeFromPercent);
+
+    elements.resizeAspectToggle.addEventListener("change", () => {
+      updateWatermarkSettings({ resizeAspectLocked: elements.resizeAspectToggle.checked });
+      updateControlValues();
+    });
+
+    elements.metadataSelect.addEventListener("change", () => {
+      updateWatermarkSettings({ metadataMode: elements.metadataSelect.value });
+      updateControlValues();
+    });
+
+    elements.metadataAuthorInput.addEventListener("input", () => {
+      updateWatermarkSettings({ metadataAuthor: elements.metadataAuthorInput.value });
+      saveMetadataDefaults();
+    });
+
+    elements.metadataCopyrightInput.addEventListener("input", () => {
+      updateWatermarkSettings({ metadataCopyright: elements.metadataCopyrightInput.value });
+      saveMetadataDefaults();
+    });
+
+    elements.metadataContactInput.addEventListener("input", () => {
+      updateWatermarkSettings({ metadataContact: elements.metadataContactInput.value });
+      saveMetadataDefaults();
+    });
+
+    elements.outputSharpeningSelect.addEventListener("change", () => {
+      updateWatermarkSettings({ outputSharpening: elements.outputSharpeningSelect.value });
       updateControlValues();
     });
   }
@@ -542,6 +887,102 @@
       clearPhotoSelection();
       renderThumbnails();
       updateDeleteButton();
+    });
+  }
+
+  function closeExportModal(force = false) {
+    if ((!force && exporting) || !elements.exportModal) {
+      return;
+    }
+
+    elements.exportModal.classList.remove("open");
+    elements.exportModal.setAttribute("aria-hidden", "true");
+  }
+
+  function openExportModal() {
+    if (!elements.exportModal) {
+      return;
+    }
+
+    syncResizeToCurrentPhotoRatio();
+    updateControlValues();
+    elements.exportModal.classList.add("open");
+    elements.exportModal.setAttribute("aria-hidden", "false");
+    window.setTimeout(() => {
+      elements.confirmExportButton.focus();
+    }, 0);
+  }
+
+  function createExportModal() {
+    const modal = document.createElement("div");
+    modal.id = "exportModal";
+    modal.className = "export-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-labelledby", "exportModalTitle");
+    modal.setAttribute("aria-hidden", "true");
+
+    const dialog = document.createElement("div");
+    dialog.className = "export-dialog";
+
+    const header = document.createElement("div");
+    header.className = "export-modal-header";
+
+    const title = document.createElement("h2");
+    title.id = "exportModalTitle";
+    title.textContent = "导出设置";
+
+    const closeButton = document.createElement("button");
+    closeButton.className = "icon-button";
+    closeButton.type = "button";
+    closeButton.setAttribute("aria-label", "关闭导出设置");
+    closeButton.textContent = "×";
+
+    const body = document.createElement("div");
+    body.className = "export-modal-body";
+    body.appendChild(elements.exportSettings);
+
+    const footer = document.createElement("div");
+    footer.className = "export-modal-footer";
+
+    const cancelButton = document.createElement("button");
+    cancelButton.className = "secondary-button";
+    cancelButton.type = "button";
+    cancelButton.textContent = "取消";
+
+    const confirmButton = document.createElement("button");
+    confirmButton.id = "confirmExportButton";
+    confirmButton.className = "export-button";
+    confirmButton.type = "button";
+    confirmButton.textContent = "导出";
+
+    header.appendChild(title);
+    header.appendChild(closeButton);
+    footer.appendChild(cancelButton);
+    footer.appendChild(confirmButton);
+    dialog.appendChild(header);
+    dialog.appendChild(body);
+    dialog.appendChild(footer);
+    modal.appendChild(dialog);
+    document.body.appendChild(modal);
+
+    elements.exportModal = modal;
+    elements.confirmExportButton = confirmButton;
+    elements.cancelExportButton = cancelButton;
+    elements.closeExportButton = closeButton;
+
+    closeButton.addEventListener("click", () => closeExportModal());
+    cancelButton.addEventListener("click", () => closeExportModal());
+    confirmButton.addEventListener("click", handleExport);
+    modal.addEventListener("click", (event) => {
+      if (event.target === modal) {
+        closeExportModal();
+      }
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && modal.classList.contains("open")) {
+        closeExportModal();
+      }
     });
   }
 
@@ -591,7 +1032,9 @@
 
     exporting = true;
     elements.exportButton.disabled = true;
+    elements.confirmExportButton.disabled = true;
     elements.exportButton.textContent = "导出中...";
+    elements.confirmExportButton.textContent = "导出中...";
 
     try {
       const result = await exportWatermarkedJpg({
@@ -603,11 +1046,13 @@
         }
       });
       setDownloadMessage(result);
+      closeExportModal(true);
     } catch (error) {
       setMessage(error.message, "error");
     } finally {
       exporting = false;
       elements.exportButton.disabled = false;
+      elements.confirmExportButton.disabled = false;
       updateExportButtonLabel();
     }
   }
@@ -622,6 +1067,7 @@
     elements.watermarkInput = $("#watermarkInput");
     elements.previewCanvas = $("#previewCanvas");
     elements.canvasWrap = $(".canvas-wrap");
+    elements.faviconLink = $("#faviconLink");
     elements.emptyState = $("#emptyState");
     elements.messageBar = $("#messageBar");
     elements.watermarkStatus = $("#watermarkStatus");
@@ -631,18 +1077,27 @@
     elements.opacityRange = $("#opacityRange");
     elements.marginRange = $("#marginRange");
     elements.qualityRange = $("#qualityRange");
-    elements.longEdgeInput = $("#longEdgeInput");
     elements.outputSizeValue = $("#outputSizeValue");
     elements.filenamePrefixInput = $("#filenamePrefixInput");
     elements.filenameSuffixInput = $("#filenameSuffixInput");
+    elements.filenamePreviewValue = $("#filenamePreviewValue");
     elements.formatSelect = $("#formatSelect");
     elements.colorSpaceSelect = $("#colorSpaceSelect");
+    elements.qualityHint = $("#qualityHint");
+    elements.targetFileSizeToggle = $("#targetFileSizeToggle");
+    elements.targetFileSizeInput = $("#targetFileSizeInput");
+    elements.resizeWidthInput = $("#resizeWidthInput");
+    elements.resizeHeightInput = $("#resizeHeightInput");
+    elements.resizePercentInput = $("#resizePercentInput");
+    elements.resizeAspectToggle = $("#resizeAspectToggle");
+    elements.metadataSelect = $("#metadataSelect");
+    elements.metadataFields = $("#metadataFields");
+    elements.metadataAuthorInput = $("#metadataAuthorInput");
+    elements.metadataCopyrightInput = $("#metadataCopyrightInput");
+    elements.metadataContactInput = $("#metadataContactInput");
+    elements.outputSharpeningSelect = $("#outputSharpeningSelect");
     elements.textWatermarkInput = $("#textWatermarkInput");
     elements.textColorInput = $("#textColorInput");
-    elements.textFontSelect = $("#textFontSelect");
-    elements.textWeightSelect = $("#textWeightSelect");
-    elements.textItalicToggle = $("#textItalicToggle");
-    elements.textEffectSelect = $("#textEffectSelect");
     elements.invertToggle = $("#invertToggle");
     elements.watermarkLayoutSelect = $("#watermarkLayoutSelect");
     elements.themeToggle = $("#themeToggle");
@@ -655,27 +1110,30 @@
     elements.marginValue = $("#marginValue");
     elements.qualityValue = $("#qualityValue");
     elements.exportButton = $("#exportButton");
+    elements.exportSettings = $(".export-settings");
 
-    elements.photoInput.addEventListener("change", handlePhotoUpload);
+    loadMetadataDefaults();
+    createExportModal();
+
+    elements.photoInput.addEventListener("change", handlePhotoUploadOptimized);
     elements.watermarkInput.addEventListener("change", handleWatermarkUpload);
-    elements.exportButton.addEventListener("click", handleExport);
+    elements.exportButton.addEventListener("click", openExportModal);
 
     bindRangeControl(elements.sizeRange, "sizePercent", (value) => Number(value));
     bindRangeControl(elements.opacityRange, "opacity", (value) => Number(value) / 100);
     bindRangeControl(elements.marginRange, "margin", (value) => Number(value));
     bindRangeControl(elements.qualityRange, "exportQuality", (value) => Number(value) / 100);
     bindRadioControls("position", "position");
-    bindRadioControls("exportScope", "exportScope");
     bindRadioControls("exportDelivery", "exportDelivery");
     bindTextControl(elements.filenamePrefixInput, "filenamePrefix");
     bindTextControl(elements.filenameSuffixInput, "filenameSuffix");
     bindSelectControl(elements.formatSelect, "outputFormat");
     bindSelectControl(elements.colorSpaceSelect, "colorSpace");
     bindSelectControl(elements.watermarkLayoutSelect, "watermarkLayout");
+    bindExportSettingsControls();
     bindTextWatermarkControls();
     bindInvertToggle();
     bindThemeToggle();
-    bindLongEdgeInput();
     bindDeleteButton();
     bindSelectionActions();
     bindThumbnailList();

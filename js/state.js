@@ -18,11 +18,7 @@
     textWatermark: {
       enabled: false,
       text: "",
-      color: "#ffffff",
-      fontFamily: "system",
-      fontWeight: "700",
-      italic: false,
-      effect: "shadow"
+      color: "#ffffff"
     },
     settings: {
       sizePercent: 15,
@@ -32,13 +28,27 @@
       watermarkLayout: "horizontal",
       invertWatermark: false,
       exportQuality: 0.95,
-      exportScope: "current",
+      exportScope: "all",
       exportDelivery: "zip",
-      outputLongEdge: 3000,
       outputFormat: "jpeg",
       colorSpace: "srgb",
       filenamePrefix: "",
       filenameSuffix: "_watermarked",
+      exportDestinationMode: "picker",
+      exportSubfolderEnabled: false,
+      exportSubfolderName: "Watermarked",
+      existingFileAction: "rename",
+      targetFileSizeEnabled: false,
+      targetFileSizeKb: 1024,
+      resizeWidth: 3000,
+      resizeHeight: 3000,
+      resizePercent: 100,
+      resizeAspectLocked: true,
+      metadataMode: "copyright-contact",
+      metadataAuthor: "",
+      metadataCopyright: "",
+      metadataContact: "",
+      outputSharpening: "none",
       theme: "dark"
     }
   };
@@ -62,6 +72,10 @@
         URL.revokeObjectURL(photo[key]);
       }
     });
+
+    if (photo.image && typeof photo.image.close === "function") {
+      photo.image.close();
+    }
   }
 
   function setActivePhoto(index) {
